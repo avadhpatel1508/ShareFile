@@ -60,6 +60,16 @@
     #joinBtn:hover {
       background-color: #218838;
     }
+    #shareBtn {
+      background-color: #ffc107;
+    }
+    #shareBtn:hover {
+      background-color: #e0a800;
+    }
+    #shareBtn:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
     #peerCode {
       width: 100%;
       padding: 8px;
@@ -96,8 +106,9 @@
 <body>
   <div class="container">
     <h1>High-Speed File Sharing</h1>
-    <div id="status"></div>
+    <div id="status">Click 'Generate Connection Code' to start</div>
     <input type="file" id="fileInput" multiple>
+    <button id="shareBtn" disabled>Share File</button>
     <button id="connectBtn">Generate Connection Code</button>
     <input id="peerCode" type="text" placeholder="Enter peer's code">
     <button id="joinBtn">Connect to Peer</button>
@@ -121,6 +132,7 @@
     const fileInput = document.getElementById('fileInput');
     const connectBtn = document.getElementById('connectBtn');
     const joinBtn = document.getElementById('joinBtn');
+    const shareBtn = document.getElementById('shareBtn');
     const peerCode = document.getElementById('peerCode');
     const progress = document.getElementById('progress');
     const progressBar = document.getElementById('progressBar');
@@ -128,11 +140,17 @@
 
     peer.on('open', (id) => {
       status.textContent = `Your ID: ${id}`;
+      updateShareButton();
     });
 
     peer.on('connection', (connection) => {
       conn = connection;
       setupConnection();
+    });
+
+    peer.on('error', (err) => {
+      console.error('PeerJS error:', err);
+      status.textContent = 'Error connecting. Try again.';
     });
 
     connectBtn.addEventListener('click', () => {
@@ -149,8 +167,34 @@
       }
     });
 
+    fileInput.addEventListener('change', () => {
+      file = fileInput.files[0];
+      updateShareButton();
+      if (file && conn) {
+        status.textContent = `Selected ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB). Click 'Share File' to send.`;
+      }
+    });
+
+    shareBtn.addEventListener('click', () => {
+      if (file && conn) {
+        status.textContent = `Sending ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+        progress.classList.remove('hidden');
+        progressText.textContent = '0%';
+        progressBar.style.width = '0%';
+        sendFile(file);
+      }
+    });
+
+    function updateShareButton() {
+      shareBtn.disabled = !(file && conn);
+    }
+
     function setupConnection() {
       status.textContent = 'Connected to peer!';
+      updateShareButton();
+      conn.on('open', () => {
+        console.log('Data channel open');
+      });
       conn.on('data', (data) => {
         if (data.type === 'file-meta') {
           totalSize = data.size;
@@ -172,27 +216,23 @@
                 const a = document.createElement('a');
                 a.href = url;
                 a.download = data.name;
+                console.log(`Initiating download for ${data.name}`);
                 a.click();
                 URL.revokeObjectURL(url);
-                status.textContent = 'File received!';
+                status.textContent = `File received! Check your Downloads folder (${data.name}).`;
                 progress.classList.add('hidden');
               }
             }
           });
         }
       });
+      conn.on('error', (err) => {
+        console.error('Connection error:', err);
+        status.textContent = 'Connection lost. Please reconnect.';
+        conn = null;
+        updateShareButton();
+      });
     }
-
-    fileInput.addEventListener('change', () => {
-      file = fileInput.files[0];
-      if (file && conn) {
-        status.textContent = `Sending ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
-        progress.classList.remove('hidden');
-        progressText.textContent = '0%';
-        progressBar.style.width = '0%';
-        sendFile(file);
-      }
-    });
 
     function sendFile(file) {
       const chunkSize = 16384;
@@ -214,6 +254,10 @@
             status.textContent = 'File sent!';
             progress.classList.add('hidden');
           }
+        };
+        reader.onerror = () => {
+          console.error('File read error');
+          status.textContent = 'Error reading file. Try again.';
         };
         reader.readAsArrayBuffer(slice);
       }
