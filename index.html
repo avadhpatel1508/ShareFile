@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>High-Speed File Sharing</title>
+  <style>
+    body {
+      background-color: #f0f0f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: Arial, sans-serif;
+    }
+    .container {
+      background-color: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      width: 100%;
+      max-width: 400px;
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 16px;
+      text-align: center;
+    }
+    #status {
+      text-align: center;
+      margin-bottom: 16px;
+      color: #666;
+    }
+    input[type="file"] {
+      margin-bottom: 16px;
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 4px;
+      color: white;
+      cursor: pointer;
+      margin-bottom: 8px;
+    }
+    #connectBtn {
+      background-color: #007bff;
+    }
+    #connectBtn:hover {
+      background-color: #0056b3;
+    }
+    #joinBtn {
+      background-color: #28a745;
+    }
+    #joinBtn:hover {
+      background-color: #218838;
+    }
+    #peerCode {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+    #progress {
+      margin-top: 16px;
+    }
+    #progress.hidden {
+      display: none;
+    }
+    .progress-bar {
+      width: 100%;
+      background-color: #e9ecef;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    #progressBar {
+      height: 16px;
+      background-color: #007bff;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+    #progressText {
+      display: block;
+      font-size: 14px;
+      color: #666;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>High-Speed File Sharing</h1>
+    <div id="status"></div>
+    <input type="file" id="fileInput" multiple>
+    <button id="connectBtn">Generate Connection Code</button>
+    <input id="peerCode" type="text" placeholder="Enter peer's code">
+    <button id="joinBtn">Connect to Peer</button>
+    <div id="progress" class="hidden">
+      <div class="progress-bar">
+        <div id="progressBar"></div>
+      </div>
+      <span id="progressText"></span>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <script>
+    const peer = new Peer();
+    let conn = null;
+    let file = null;
+    let totalSize = 0;
+    let sentSize = 0;
+
+    const status = document.getElementById('status');
+    const fileInput = document.getElementById('fileInput');
+    const connectBtn = document.getElementById('connectBtn');
+    const joinBtn = document.getElementById('joinBtn');
+    const peerCode = document.getElementById('peerCode');
+    const progress = document.getElementById('progress');
+    const progressBar = document.getElementById('progressBar');
+    const progressText = document.getElementById('progressText');
+
+    peer.on('open', (id) => {
+      status.textContent = `Your ID: ${id}`;
+    });
+
+    peer.on('connection', (connection) => {
+      conn = connection;
+      setupConnection();
+    });
+
+    connectBtn.addEventListener('click', () => {
+      status.textContent = `Share your ID: ${peer.id}`;
+    });
+
+    joinBtn.addEventListener('click', () => {
+      const peerId = peerCode.value.trim();
+      if (peerId) {
+        conn = peer.connect(peerId);
+        setupConnection();
+      } else {
+        status.textContent = 'Please enter a valid peer ID';
+      }
+    });
+
+    function setupConnection() {
+      status.textContent = 'Connected to peer!';
+      conn.on('data', (data) => {
+        if (data.type === 'file-meta') {
+          totalSize = data.size;
+          status.textContent = `Receiving ${data.name} (${(data.size / 1024 / 1024).toFixed(2)} MB)`;
+          progress.classList.remove('hidden');
+          progressText.textContent = '0%';
+          progressBar.style.width = '0%';
+          let receivedData = [];
+          conn.on('data', (chunk) => {
+            if (chunk.type === 'file-chunk') {
+              receivedData.push(chunk.data);
+              sentSize += chunk.data.byteLength;
+              const percent = (sentSize / totalSize * 100).toFixed(2);
+              progressBar.style.width = `${percent}%`;
+              progressText.textContent = `${percent}%`;
+              if (sentSize >= totalSize) {
+                const blob = new Blob(receivedData);
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = data.name;
+                a.click();
+                URL.revokeObjectURL(url);
+                status.textContent = 'File received!';
+                progress.classList.add('hidden');
+              }
+            }
+          });
+        }
+      });
+    }
+
+    fileInput.addEventListener('change', () => {
+      file = fileInput.files[0];
+      if (file && conn) {
+        status.textContent = `Sending ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+        progress.classList.remove('hidden');
+        progressText.textContent = '0%';
+        progressBar.style.width = '0%';
+        sendFile(file);
+      }
+    });
+
+    function sendFile(file) {
+      const chunkSize = 16384;
+      let offset = 0;
+      conn.send({ type: 'file-meta', name: file.name, size: file.size });
+
+      function readChunk() {
+        const reader = new FileReader();
+        const slice = file.slice(offset, offset + chunkSize);
+        reader.onload = () => {
+          conn.send({ type: 'file-chunk', data: reader.result });
+          offset += chunkSize;
+          const percent = (offset / file.size * 100).toFixed(2);
+          progressBar.style.width = `${percent}%`;
+          progressText.textContent = `${percent}%`;
+          if (offset < file.size) {
+            readChunk();
+          } else {
+            status.textContent = 'File sent!';
+            progress.classList.add('hidden');
+          }
+        };
+        reader.readAsArrayBuffer(slice);
+      }
+      readChunk();
+    }
+  </script>
+</body>
+</html>
